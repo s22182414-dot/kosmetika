@@ -1,0 +1,6 @@
+{
+  "name": "Cosmetics Analyzer & Telegram Poster",
+  "description": "Upload an image of cosmetic products, automatically identify them, get descriptions in Uzbek, and post them to a Telegram channel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
