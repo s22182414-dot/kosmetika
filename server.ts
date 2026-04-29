@@ -5,24 +5,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import mongoose from "mongoose";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Define Product Schema
-const productSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  description: { type: String, required: true },
-  searchQuery: { type: String, required: true },
-  imageUrl: { type: String, default: '' },
-  imageUrls: { type: [String], default: [] },
-  status: { type: String, enum: ['idle', 'sending', 'success', 'error'], default: 'idle' },
-  batchId: { type: String, default: '' },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const Product = mongoose.model('Product', productSchema);
 
 async function startServer() {
   const app = express();
@@ -30,94 +13,9 @@ async function startServer() {
 
   app.use(express.json());
 
-  // Connect to MongoDB
-  if (process.env.MONGODB_URI) {
-    try {
-      await mongoose.connect(process.env.MONGODB_URI);
-      console.log("Connected to MongoDB");
-    } catch (err) {
-      console.error("MongoDB connection error:", err);
-    }
-  } else {
-    console.warn("MONGODB_URI is not set in .env. Running without database connection.");
-  }
-
   // API routes FIRST
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", db: mongoose.connection.readyState === 1 ? "connected" : "disconnected" });
-  });
-
-  // Product CRUD Routes
-  app.get("/api/products", async (req, res) => {
-    if (mongoose.connection.readyState !== 1) return res.json([]);
-    try {
-      const products = await Product.find().sort({ createdAt: -1 });
-      // Map _id to id for frontend compatibility
-      const formatted = products.map(p => ({
-        id: p._id.toString(),
-        name: p.name,
-        description: p.description,
-        searchQuery: p.searchQuery,
-        imageUrl: p.imageUrl,
-        imageUrls: (p as any).imageUrls || [],
-        status: p.status,
-        batchId: p.batchId || (p.createdAt as Date)?.toISOString() || ''
-      }));
-      res.json(formatted);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/products", async (req, res) => {
-    if (mongoose.connection.readyState !== 1) return res.json(req.body.map((p: any) => ({ ...p, id: Math.random().toString(36).substring(7) })));
-    try {
-      const products = req.body;
-      const created = await Product.insertMany(products);
-      const formatted = created.map(p => ({
-        id: p._id.toString(),
-        name: p.name,
-        description: p.description,
-        searchQuery: p.searchQuery,
-        imageUrl: p.imageUrl,
-        imageUrls: (p as any).imageUrls || [],
-        status: p.status,
-        batchId: p.batchId || ''
-      }));
-      res.json(formatted);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.put("/api/products/:id", async (req, res) => {
-    if (mongoose.connection.readyState !== 1) return res.json(req.body);
-    try {
-      const updated = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
-      if (!updated) return res.status(404).json({ error: "Product not found" });
-      res.json({
-        id: updated._id.toString(),
-        name: updated.name,
-        description: updated.description,
-        searchQuery: updated.searchQuery,
-        imageUrl: updated.imageUrl,
-        imageUrls: (updated as any).imageUrls || [],
-        status: updated.status,
-        batchId: updated.batchId || ''
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.delete("/api/products/:id", async (req, res) => {
-    if (mongoose.connection.readyState !== 1) return res.json({ success: true });
-    try {
-      await Product.findByIdAndDelete(req.params.id);
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    res.json({ status: "ok", db: "browser-localstorage" });
   });
 
   app.post("/api/telegram/send", async (req, res) => {

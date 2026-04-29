@@ -34,6 +34,21 @@ interface ConfirmModal {
   onConfirm: () => void;
 }
 
+const LOCAL_STORAGE_KEY = 'kosmetika_products';
+
+const getLocalProducts = (): Product[] => {
+  try {
+    const data = localStorage.getItem(LOCAL_STORAGE_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveLocalProducts = (products: Product[]) => {
+  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(products));
+};
+
 export default function App() {
   const [isDarkTheme, setIsDarkTheme] = useState(() => {
     return localStorage.getItem('theme') === 'dark';
@@ -41,7 +56,15 @@ export default function App() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [_products, _setProducts] = useState<Product[]>([]);
+  const setProducts = (action: React.SetStateAction<Product[]>) => {
+    _setProducts(prev => {
+      const next = typeof action === 'function' ? (action as any)(prev) : action;
+      saveLocalProducts(next);
+      return next;
+    });
+  };
+  const products = _products;
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -167,9 +190,10 @@ export default function App() {
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch('/api/products');
-      const data = await res.json();
-      setProducts(Array.isArray(data) ? data : []);
+      // Simulate slight loading delay for UX
+      await new Promise(r => setTimeout(r, 300));
+      const data = getLocalProducts();
+      _setProducts(data);
     } catch (err) {
       console.error('Failed to fetch products', err);
     } finally {
@@ -318,6 +342,7 @@ DIQQAT:
         }
 
         return {
+          id: Math.random().toString(36).substring(2, 11),
           name: p.name,
           description: p.description,
           searchQuery: p.searchQuery,
@@ -328,13 +353,7 @@ DIQQAT:
         };
       }));
 
-      const saveRes = await fetch('/api/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newProducts),
-      });
-      const savedProducts = await saveRes.json();
-      setProducts(prev => [...savedProducts, ...prev]);
+      setProducts(prev => [...newProducts, ...prev]);
       setSelectedImage(null);
     } catch (err: any) {
       console.error(err);
@@ -371,11 +390,6 @@ DIQQAT:
 
       // Topilgan rasmni saqlash
       setProducts(prev => prev.map(p => p.id === product.id ? { ...p, imageUrl, imageUrls } : p));
-      await fetch(`/api/products/${product.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageUrl, imageUrls }),
-      });
     }
 
     setProducts(prev => prev.map(p => p.id === product.id ? { ...p, status: 'sending' } : p));
@@ -391,11 +405,6 @@ DIQQAT:
 
       if (data.ok) {
         setProducts(prev => prev.map(p => p.id === product.id ? { ...p, status: 'success' } : p));
-        await fetch(`/api/products/${product.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'success' }),
-        });
       } else {
         let errorMsg = data.description || "Telegramga yuborishda xatolik";
         if (errorMsg.includes("wrong type of the web page content") || errorMsg.includes("failed to get HTTP URL content")) {
@@ -409,11 +418,6 @@ DIQQAT:
       console.error(err);
       showToast(`Xatolik: ${err.message}`, 'error');
       setProducts(prev => prev.map(p => p.id === product.id ? { ...p, status: 'error' } : p));
-      await fetch(`/api/products/${product.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'error' }),
-      });
     }
   };
 
@@ -426,11 +430,6 @@ DIQQAT:
         const newUrls: string[] = imgData.imageUrls || [];
         if (newUrl) {
           setProducts(prev => prev.map(p => p.id === product.id ? { ...p, imageUrl: newUrl, imageUrls: newUrls } : p));
-          await fetch(`/api/products/${product.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ imageUrl: newUrl, imageUrls: newUrls }),
-          });
         }
       }
     } catch (err) {
@@ -440,34 +439,15 @@ DIQQAT:
 
   const selectProductImage = async (product: Product, url: string) => {
     setProducts(prev => prev.map(p => p.id === product.id ? { ...p, imageUrl: url } : p));
-    try {
-      await fetch(`/api/products/${product.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageUrl: url }),
-      });
-    } catch (err) {
-      console.error('Failed to update selected image', err);
-    }
   };
 
   const deleteProduct = async (id: string) => {
     setProducts(prev => prev.filter(p => p.id !== id));
-    try {
-      await fetch(`/api/products/${id}`, { method: 'DELETE' });
-    } catch (err) {
-      console.error('Failed to delete product', err);
-    }
   };
 
   const deleteBatch = async (batchId: string, items: Product[]) => {
     setProducts(prev => prev.filter(p => p.batchId !== batchId));
     showToast(`${items.length} ta mahsulot o'chirildi`, 'info');
-    try {
-      await Promise.all(items.map(p => fetch(`/api/products/${p.id}`, { method: 'DELETE' })));
-    } catch (err) {
-      console.error('Failed to delete batch', err);
-    }
   };
 
   const sendBatchToTelegram = async (items: Product[]) => {
