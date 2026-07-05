@@ -9,7 +9,7 @@ import { fileURLToPath } from "url";
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = 5173;
 
   app.use(express.json());
 
@@ -30,10 +30,10 @@ async function startServer() {
       });
     }
 
-    // Telegram caption max 1024 chars (media group) or 4096 (single photo)
+    // Telegram caption max 1024 chars
     let safeCaption = typeof caption === 'string' ? caption.slice(0, 1024) : '';
 
-    // HTML escape to avoid unclosed entity errors & converting basic markdown to HTML
+    // HTML escape & convert basic markdown to HTML for Telegram
     safeCaption = safeCaption
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -52,26 +52,36 @@ async function startServer() {
     try {
       if (photoList.length === 1) {
         // ── Single photo ──────────────────────────────────────────
-        const response = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            photo: photoList[0],
-            caption: safeCaption,
-            //parse_mode: 'HTML',
-          }),
-        });
-        const data = await response.json() as any;
-        if (data.ok) return res.json(data);
-        return res.status(400).json(data);
+        // Try each URL until one works
+        let lastData: any = null;
+        for (const url of photoList) {
+          const response = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              photo: url,
+              caption: safeCaption,
+              parse_mode: 'HTML',
+            }),
+          });
+          lastData = await response.json() as any;
+          if (lastData.ok) return res.json(lastData);
+          // If WEBPAGE_CURL_FAILED or similar, try next URL
+          const desc: string = lastData.description || '';
+          if (desc.includes('WEBPAGE_CURL_FAILED') || desc.includes('wrong type') || desc.includes('failed to get HTTP URL')) {
+            console.warn(`URL ishlamadi, keyingisini sinab ko'rilmoqda: ${url}`);
+            continue;
+          }
+          break; // Other errors — stop
+        }
+        return res.status(400).json(lastData || { ok: false, description: 'Rasm yuborishda xatolik' });
 
       } else {
         // ── Media group (album) — up to 10 photos ─────────────────
         const media = photoList.slice(0, 10).map((url: string, i: number) => ({
           type: 'photo',
           media: url,
-          // Caption only on first photo; parse_mode required with caption
           ...(i === 0 ? { caption: safeCaption, parse_mode: 'HTML' } : {}),
         }));
 
@@ -81,9 +91,28 @@ async function startServer() {
           body: JSON.stringify({ chat_id: chatId, media }),
         });
         const data = await response.json() as any;
-        // sendMediaGroup returns { ok: true, result: [...] } on success
         if (data.ok) return res.json({ ok: true });
-        return res.status(400).json(data);
+
+        // If media group fails (e.g. some URLs broken), try single best photo
+        if (!data.ok) {
+          const desc: string = data.description || '';
+          if (desc.includes('WEBPAGE_CURL_FAILED') || desc.includes('wrong type') || desc.includes('failed to get HTTP URL')) {
+            console.warn('Media group failed, single foto yuborilmoqda...');
+            const singleRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                photo: photoList[0],
+                caption: safeCaption,
+                parse_mode: 'HTML',
+              }),
+            });
+            const singleData = await singleRes.json() as any;
+            if (singleData.ok) return res.json(singleData);
+          }
+          return res.status(400).json(data);
+        }
       }
     } catch (error: any) {
       console.error("Telegram API Error:", error);
