@@ -120,46 +120,77 @@ async function startServer() {
     }
   });
 
-  // Automated Image Search using DuckDuckGo
+  // Automated Image Search — DuckDuckGo + Bing fallback
   app.get("/api/search-image", async (req, res) => {
+    const q = req.query.q as string;
+    if (!q) return res.status(400).json({ error: "Missing query" });
+
+    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    const baseHeaders = {
+      'User-Agent': ua,
+      'Accept-Language': 'en-US,en;q=0.9',
+    };
+
+    // ── 1. DuckDuckGo ─────────────────────────────────────────────
     try {
-      const q = req.query.q as string;
-      if (!q) return res.status(400).json({ error: "Missing query" });
-      
-      const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36' };
-      const response = await fetch(`https://duckduckgo.com/?q=${encodeURIComponent(q)}&iax=images&ia=images`, { headers });
-      const html = await response.text();
-      
+      const ddgHtml = await fetch(
+        `https://duckduckgo.com/?q=${encodeURIComponent(q)}&iax=images&ia=images`,
+        { headers: { ...baseHeaders, 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8' }, signal: AbortSignal.timeout(8000) }
+      ).then(r => r.text());
+
       let vqd = '';
-      const vqdMatch1 = html.match(/vqd=([\d-]+)/);
-      const vqdMatch2 = html.match(/vqd="([^"]+)"/);
-      if (vqdMatch1) vqd = vqdMatch1[1];
-      else if (vqdMatch2) vqd = vqdMatch2[1];
-      
-      if (!vqd) {
-          const m = html.match(/vqd[='"]+([^&"'\s]+)/);
-          if (m) vqd = m[1];
+      for (const pattern of [
+        /"vqd"\s*:\s*"([\d-]+)"/,
+        /vqd=['"]?([\d-]+)['"]?[,&\s]/,
+        /vqd=([\d-]+)/,
+        /vqd[='"]+([^&"'\s]+)/,
+      ]) {
+        const m = ddgHtml.match(pattern);
+        if (m?.[1]) { vqd = m[1]; break; }
       }
 
-      if (!vqd) {
-        return res.json({ imageUrl: '' });
+      if (vqd) {
+        const data = await fetch(
+          `https://duckduckgo.com/i.js?q=${encodeURIComponent(q)}&o=json&vqd=${vqd}&f=,,,,&p=1`,
+          { headers: { ...baseHeaders, 'Referer': 'https://duckduckgo.com/', 'Accept': 'application/json,*/*' }, signal: AbortSignal.timeout(8000) }
+        ).then(r => r.json()) as any;
+
+        const imageUrls: string[] = (data.results || [])
+          .slice(0, 5)
+          .map((r: any) => r.image)
+          .filter((url: string) => typeof url === 'string' && url.startsWith('http'));
+
+        if (imageUrls.length > 0) {
+          console.log(`DDG topdi: ${imageUrls.length} rasm`);
+          return res.json({ imageUrl: imageUrls[0], imageUrls });
+        }
       }
-      
-      const searchRes = await fetch(`https://duckduckgo.com/i.js?q=${encodeURIComponent(q)}&o=json&vqd=${encodeURIComponent(vqd)}&f=,,,,&p=1`, { headers });
-      const data = await searchRes.json();
-      const results = data.results || [];
-      // Return up to 5 image URLs
-      const imageUrls: string[] = results
-        .slice(0, 5)
-        .map((r: any) => r.image)
-        .filter((url: string) => !!url);
-      const imageUrl = imageUrls[0] || '';
-      res.json({ imageUrl, imageUrls });
-    } catch(err) {
-      console.error("Image search error:", err);
-      res.json({ imageUrl: '', imageUrls: [] }); // Fail gracefully
+    } catch (e) {
+      console.warn('DuckDuckGo qidirish muvaffaqiyatsiz:', e);
     }
+
+    // ── 2. Bing fallback ──────────────────────────────────────────
+    try {
+      const bingHtml = await fetch(
+        `https://www.bing.com/images/async?q=${encodeURIComponent(q)}&first=1&count=5&adlt=off&qft=`,
+        { headers: { ...baseHeaders, 'Accept': 'text/html,*/*;q=0.8', 'Referer': 'https://www.bing.com/' }, signal: AbortSignal.timeout(8000) }
+      ).then(r => r.text());
+
+      const murlMatches = [...bingHtml.matchAll(/murl&quot;:&quot;(https?:\/\/[^&]+?)&quot;/g)];
+      const imageUrls = murlMatches.slice(0, 5).map(m => decodeURIComponent(m[1])).filter(Boolean);
+
+      if (imageUrls.length > 0) {
+        console.log(`Bing topdi: ${imageUrls.length} rasm`);
+        return res.json({ imageUrl: imageUrls[0], imageUrls });
+      }
+    } catch (e) {
+      console.warn('Bing qidirish muvaffaqiyatsiz:', e);
+    }
+
+    console.warn(`Rasm topilmadi: "${q}"`);
+    return res.json({ imageUrl: '', imageUrls: [] });
   });
+
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
